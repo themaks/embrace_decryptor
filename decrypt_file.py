@@ -103,7 +103,7 @@ def entropy(string):
 def try_unlock(filename, righttime=None, delta=1000, distance=entropy):
     original_size = os.path.getsize(filename) - POSTFIX_SIZE
     with open(filename, 'rb') as f:
-        if (original_size < ENCRYPTION_SIZE_LIMIT) or (os.path.splittext(filename) in SPECIAL_EXTENTIONS):
+        if (original_size < ENCRYPTION_SIZE_LIMIT) or (os.path.splitext(filename) in SPECIAL_EXTENTIONS):
             filecontent = f.read(original_size)
         else:
             filecontent = f.read(ENCRYPTION_SIZE_LIMIT)

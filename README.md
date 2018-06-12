@@ -16,5 +16,34 @@ Once one file has been decrypted, the initial value of ```time(0)``` is known, a
 
 ## Script usage
 ```
-python decrypt_file.py <filename> [timestamp of the execution of the malware, if computed]
+usage: decrypt_file.py [-h] [-l LOCALTIME | -t TIME] [-d DELTA] [-v] [-o]
+                       file [file ...]
+
+Decrypt .embrace ransomware files
+
+positional arguments:
+  file                  file(s) to decrypt
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -l LOCALTIME, --localtime LOCALTIME
+                        time of the encryption (local time, format YYYY-MM-DD-
+                        hh-mm-ss), if known. Can be approximative if you pass
+                        the --delta argument
+  -t TIME, --time TIME  time of the encryption (in seconds since Epoch), if
+                        known. Can be approximative if you pass the --delta
+                        argument
+  -d DELTA, --delta DELTA
+                        number of seconds to bruteforce, around the provided
+                        encryption time, or the file's last modification date
+  -v, --verbose         verbose mode
+  -o, --overwrite       Automatically overwrite decrypted files. Ex: after
+                        decryption of xxx.ext..[embrace@airmail.cc].embrace,
+                        xxx.ext will be overwritten
+
+For this tool to work, the last 16 characters of the encrypted file's path
+(including the file's name, without '.[embrace@airmail.cc].embrace') must be
+the same as when the file was encrypted If this condition is not met, only the
+16 first bytes of the file at most will be destroyed. The rest of the file
+will be correctly decrypted.
 ```

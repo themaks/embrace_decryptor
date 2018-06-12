@@ -1,12 +1,25 @@
+#!/usr/bin/python2
 from Crypto.Cipher import AES
-import os,string,math,sys,shutil,argparse
+import os
+import string
+import math
+import sys
+import shutil
+import argparse
+import time
+
 holdrand = None
 alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 CRYPTED_EXTENSION = ".[embrace@airmail.cc].embrace"
 POSTFIX_SIZE = 512
 ENCRYPTION_SIZE_LIMIT = 0x100000
 SPECIAL_EXTENTIONS = [".sql", ".mdf", ".txt", ".dbf", ".ckp", ".dacpac", ".db3", ".dtxs", ".mdt", ".sdf", ".MDF", ".DBF"]
+VERBOSE = False
 
+def print_verbose(s):
+    global VERBOSE
+    if VERBOSE:
+        print s
 
 def uint32(n):
     return n & 0xFFFFFFFF
@@ -51,6 +64,7 @@ def pad_or_trunk(content, content_size):
     return content_size_to_encrypt
 
 def derive_IV_from_filename(filename):
+    filename = filename.replace(os.path.sep, "\\") # linux compatibility
     filename = str_to_bytes(filename)
     filename_16_last_rev = filename[-16:][::-1]
     for k in range(1, 16):
@@ -85,16 +99,22 @@ def entropy(string):
 def bruteforce_encryption_time(filecontent, basetime, filename, delta, distance):
     closest = 2<<128
     besttime = 0
-    start = filetime - delta/2
-    end = filetime + delta/2
-    print "[+] Trying every possible encryption time between %d and %d" % (start, end)
+    bestplain = ""
+    start = basetime - delta/2
+    end = basetime + delta/2
+    print_verbose("[+] Trying every possible encryption time between %d and %d (in seconds since Epoch)" % (start, end))
     for time in range(start, end):
         plain = decrypt_file(filecontent, filename, time)
-        dist = distance(plain)
+        dist = distance(plain[:4096]) #only analyze the first 4KB of the file for randomness testing
         if dist < closest:
             besttime = time
+            bestplain = plain
             closest = dist
-            print "\tTimestamp tested:", besttime, "entropy: ", closest, "decrypted file start: ", repr(plain[:30])
+    print_verbose("\tBruteforce results:")
+    print_verbose("\t"*2 + "Probable timestamp of the encryption date: %d" % besttime)
+    print_verbose("\t"*2 + "Average entropy per byte: %s" % closest)
+    print_verbose("\t"*2 + "Start of the decrypted file: %s" %repr(bestplain[:30]))
+    return besttime
 
 def try_unlock_file(filename, decryptiontime=None, delta=None, distance=entropy):
     original_size = os.path.getsize(filename) - POSTFIX_SIZE
@@ -105,7 +125,6 @@ def try_unlock_file(filename, decryptiontime=None, delta=None, distance=entropy)
             filecontent = f.read(ENCRYPTION_SIZE_LIMIT)
     filetime = int(os.path.getmtime(filename))
     filesize = len(filecontent)
-    print "[+] File name: %s, encrypted size: %s, last modification time: %s " % (filename, filesize, filetime)
 
     if decryptiontime is not None and delta is None:
         return decrypt_file(filecontent, filename, decryptiontime)
@@ -115,42 +134,82 @@ def try_unlock_file(filename, decryptiontime=None, delta=None, distance=entropy)
 
     if decryptiontime is None:
         print "[-] You did not provide the time of the attack."
-        print "[+] Trying the %d possible values arount the file's last modification date" % delta
+        print_verbose("[+] Trying the %d possible values arount the file's last modification date" % delta)
         basetime = filetime
     else:
-        print "[+] Trying the %d possible values arount the provided date" % delta
+        print_verbose("[+] Trying the %d possible values arount the provided date" % delta)
         basetime = decryptiontime
 
     besttime = bruteforce_encryption_time(filecontent, basetime, filename, delta, distance)
-    print "[+] The encryption time seems to be %s" % besttime
+    print "[+] The encryption time seems to be %s (in seconds since Epoch) or %s in local time" % (besttime, time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime(besttime)))
     print "[+] Use it to decrypt every other files in the same machine (cf. help)"
+    print "[+] Discard this result is the decrypted file start is not consistent with the file type"
+    
     return decrypt_file(filecontent, filename, besttime)
 
+def valid_date(s):
+    try:
+        return time.strptime(s, "%Y-%m-%d-%H-%M-%S")
+    except ValueError:
+        msg = "Not a valid date: '{0}'.".format(s)
+        raise argparse.ArgumentTypeError(msg)
 
-parser = argparse.ArgumentParser(description="Decrypt .embrace ransomware files", epilog="For this tool to work, the last 16 characters of the encrypted file's path (including the file's name, without '%s') must be the same as when the file was encrypted\r\nIf this condition is not met, only the 16 first bytes of the file at most will be destroyed. The rest of the file will be correctly decrypted." % CRYPTED_EXTENSION)
-parser.add_argument('file', nargs='+', help='file(s) to decrypt')
-parser.add_argument('--time', type=int, help='timestamp of the encryption (in seconds since Epoch), if known')
-parser.add_argument('--delta', type=int, help='number of seconds to bruteforce, around the provided timestamp, or the file\'s last modification date')
+def parse_args():
+    parser = argparse.ArgumentParser(description="Decrypt .embrace ransomware files", epilog="For this tool to work, the last 16 characters of the encrypted file's path (including the file's name, without '%s') must be the same as when the file was encrypted\r\nIf this condition is not met, only the 16 first bytes of the file at most will be destroyed. The rest of the file will be correctly decrypted." % CRYPTED_EXTENSION)
+    parser.add_argument('file', type=str, nargs='+', help='file(s) to decrypt')
+    timearg = parser.add_mutually_exclusive_group()
+    timearg.add_argument('-l', '--localtime', type=valid_date, help='time of the encryption (local time, format YYYY-MM-DD-hh-mm-ss), if known. Can be approximative if you pass the --delta argument')
+    timearg.add_argument('-t', '--time', type=int, help='time of the encryption (in seconds since Epoch), if known. Can be approximative if you pass the --delta argument')
+    parser.add_argument('-d', '--delta', type=int, help='number of seconds to bruteforce, around the provided encryption time, or the file\'s last modification date')
+    parser.add_argument('-v', '--verbose', help='verbose mode', action="store_true")
+    parser.add_argument('-o', '--overwrite', help='Automatically overwrite decrypted files. Ex: after decryption of xxx.ext.%s, xxx.ext will be overwritten' % CRYPTED_EXTENSION, action="store_true")
 
-args = parser.parse_args()
+    return parser.parse_args()
+
+
+args = parse_args()
+
+VERBOSE = args.verbose
 
 for filename in args.file:
-    filename = os.path.abspath(filename)
-    print "[+] Decrypting file %s" % filename
     if not filename.endswith(CRYPTED_EXTENSION):
-        print "[-] File name %s should end with %s " % (filename, CRYPTED_EXTENSION)
-        print"Skipping..."
+        print "Not a valid filename: '%s', should end in %s. Skipping ..." % (filename, CRYPTED_EXTENSION)
+        print 
+        continue
+    if not os.path.isfile(filename):
+        print "Not a valid file: '%s'. Skipping ..." % filename
+        print
         continue
 
-    decrypted_content = try_unlock_file(filename, righttime=args.time)
+    filename = os.path.abspath(filename)
+    basename = os.path.basename(filename).replace(CRYPTED_EXTENSION, "")
+    print "[+] Decrypting file %s" % filename
 
-    new_filename = os.path.split(filename.replace(CRYPTED_EXTENSION, ""))
-    new_filename = list(new_filename)
-    new_filename[-1] = "decrypted_" + new_filename[-1]
-    new_filename = os.sep.join(new_filename)
+    if len(basename) < 15:
+        print "[!] WARNING: Make sure the last 16 characters of the file path (not counting '%s') are the same as when the file was encrypted" % CRYPTED_EXTENSION
+        start = "[!] ex: "
+        print start + filename
+        critical_part_size = 15 - len(basename)
+        print " " * (len(filename) - len(CRYPTED_EXTENSION) - 16 + len(start)) + "^" * critical_part_size + " especially these characters"
+
+    if args.localtime is not None:
+        decryptiontime = int(time.mktime(args.localtime))
+    else:
+        decryptiontime = args.time
+
+    decrypted_content = try_unlock_file(filename, decryptiontime=decryptiontime, delta=args.delta)
+
+    new_filename = filename.replace(CRYPTED_EXTENSION, "")
+    if os.path.isfile(new_filename) and not args.overwrite:
+        print "[?] File %s already exists. Overwrite ? [Y/n]" % new_filename
+        if "n" in raw_input().lower():
+            print "[!] Skipping %s" % new_filename
+            continue
+    print "[+] Writing decoded file in %s" % new_filename
     with open(new_filename, "wb") as newf:
         with open(filename, "rb") as oldf:
             newf.write(decrypted_content)
             oldf.seek(len(decrypted_content))
             remaining_size = os.path.getsize(filename) - len(decrypted_content) - POSTFIX_SIZE
             shutil.copyfileobj(oldf, newf, remaining_size)
+    print

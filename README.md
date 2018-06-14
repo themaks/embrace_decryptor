@@ -1,5 +1,5 @@
 # embrace_decryptor
-Decryption tool for the "Embrace" ransomware, might work as well (with adjustments) for the same malware family (Everbe ?)
+Decryption tool for the "Embrace", "PainLocker" and "Everbe" ransomwares files (with extensions ```.[embrace@airmail.cc].embrace```, ```.[pain@cock.lu].pain``` and ```.[everbe@airmail.cc].everbe```)
 
 The tool exploits several weaknesses in the malware to recover the files:
 * Only one AES key is generated for every file on a same host
@@ -20,6 +20,7 @@ Once one file has been decrypted, the initial value of ```time(0)``` is known, a
 ## Script usage
 ```
 usage: decrypt_file.py [-h] [-l LOCALTIME | -t TIME] [-d DELTA] [-v] [-o]
+                       [-e EXTENSION]
                        file [file ...]
 
 Decrypt .embrace ransomware files
@@ -43,6 +44,12 @@ optional arguments:
   -o, --overwrite       Automatically overwrite decrypted files. Ex: after
                         decryption of xxx.ext..[embrace@airmail.cc].embrace,
                         xxx.ext will be overwritten
+  -e EXTENSION, --extension EXTENSION
+                        Manually provide the encrypted file extension. The
+                        tool currently supports
+                        ".[embrace@airmail.cc].embrace" (default),
+                        ".[everbe@airmail.cc].everbe" and
+                        ".[pain@cock.lu].pain"
 
 For this tool to work, the last 16 characters of the encrypted file's path
 (including the file's name, without '.[embrace@airmail.cc].embrace') must be

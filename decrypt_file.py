@@ -163,6 +163,7 @@ def parse_args():
     parser.add_argument('-d', '--delta', type=int, help='number of seconds to bruteforce, around the provided encryption time, or the file\'s last modification date')
     parser.add_argument('-v', '--verbose', help='verbose mode', action="store_true")
     parser.add_argument('-o', '--overwrite', help='Automatically overwrite decrypted files. Ex: after decryption of xxx.ext.%s, xxx.ext will be overwritten' % CRYPTED_EXTENSION, action="store_true")
+    parser.add_argument('-e', '--extension', help='Manually provide the encrypted file extension. The tool currently supports ".[embrace@airmail.cc].embrace" (default), ".[everbe@airmail.cc].everbe" and ".[pain@cock.lu].pain"')
 
     return parser.parse_args()
 
@@ -170,6 +171,8 @@ def parse_args():
 args = parse_args()
 
 VERBOSE = args.verbose
+if args.extension is not None:
+    CRYPTED_EXTENSION = args.extension
 
 for filename in args.file:
     if not filename.endswith(CRYPTED_EXTENSION):

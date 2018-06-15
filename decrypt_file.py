@@ -141,11 +141,12 @@ def try_unlock_file(filename, decryptiontime=None, delta=None, distance=entropy)
         basetime = decryptiontime
 
     besttime = bruteforce_encryption_time(filecontent, basetime, filename, delta, distance)
+    decrypted_content = decrypt_file(filecontent, filename, besttime)
     print "[+] The encryption time seems to be %s (in seconds since Epoch) or %s in local time" % (besttime, time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime(besttime)))
     print "[+] Use it to decrypt every other files in the same machine (cf. help)"
-    print "[+] Discard this result is the decrypted file start is not consistent with the file type"
-    
-    return decrypt_file(filecontent, filename, besttime)
+    print "[+] PLEASE CHECK THE FILE CONTENT. Discard this result if the decrypted file content is not consistent with the file type."
+    print "[+] Decrypted file starts with %s " % repr(decrypted_content[:30])
+    return decrypted_content
 
 def valid_date(s):
     try:
@@ -154,36 +155,7 @@ def valid_date(s):
         msg = "Not a valid date: '{0}'.".format(s)
         raise argparse.ArgumentTypeError(msg)
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Decrypt .embrace ransomware files", epilog="For this tool to work, the last 16 characters of the encrypted file's path (including the file's name, without '%s') must be the same as when the file was encrypted\r\nIf this condition is not met, only the 16 first bytes of the file at most will be destroyed. The rest of the file will be correctly decrypted." % CRYPTED_EXTENSION)
-    parser.add_argument('file', type=str, nargs='+', help='file(s) to decrypt')
-    timearg = parser.add_mutually_exclusive_group()
-    timearg.add_argument('-l', '--localtime', type=valid_date, help='time of the encryption (local time, format YYYY-MM-DD-hh-mm-ss), if known. Can be approximative if you pass the --delta argument')
-    timearg.add_argument('-t', '--time', type=int, help='time of the encryption (in seconds since Epoch), if known. Can be approximative if you pass the --delta argument')
-    parser.add_argument('-d', '--delta', type=int, help='number of seconds to bruteforce, around the provided encryption time, or the file\'s last modification date')
-    parser.add_argument('-v', '--verbose', help='verbose mode', action="store_true")
-    parser.add_argument('-o', '--overwrite', help='Automatically overwrite decrypted files. Ex: after decryption of xxx.ext.%s, xxx.ext will be overwritten' % CRYPTED_EXTENSION, action="store_true")
-    parser.add_argument('-e', '--extension', help='Manually provide the encrypted file extension. The tool currently supports ".[embrace@airmail.cc].embrace" (default), ".[everbe@airmail.cc].everbe" and ".[pain@cock.lu].pain"')
-
-    return parser.parse_args()
-
-
-args = parse_args()
-
-VERBOSE = args.verbose
-if args.extension is not None:
-    CRYPTED_EXTENSION = args.extension
-
-for filename in args.file:
-    if not filename.endswith(CRYPTED_EXTENSION):
-        print "Not a valid filename: '%s', should end in %s. Skipping ..." % (filename, CRYPTED_EXTENSION)
-        print 
-        continue
-    if not os.path.isfile(filename):
-        print "Not a valid file: '%s'. Skipping ..." % filename
-        print
-        continue
-
+def process_file(filename, args):
     filename = os.path.abspath(filename)
     basename = os.path.basename(filename).replace(CRYPTED_EXTENSION, "")
     print "[+] Decrypting file %s" % filename
@@ -207,7 +179,7 @@ for filename in args.file:
         print "[?] File %s already exists. Overwrite ? [Y/n]" % new_filename
         if "n" in raw_input().lower():
             print "[!] Skipping %s" % new_filename
-            continue
+            return
     print "[+] Writing decoded file in %s" % new_filename
     with open(new_filename, "wb") as newf:
         with open(filename, "rb") as oldf:
@@ -215,4 +187,70 @@ for filename in args.file:
             oldf.seek(len(decrypted_content))
             remaining_size = os.path.getsize(filename) - len(decrypted_content) - POSTFIX_SIZE
             shutil.copyfileobj(oldf, newf, remaining_size)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Decrypt .embrace ransomware files", epilog="For this tool to work, the last 16 characters of the encrypted file's path (including the file's name, without '%s') must be the same as when the file was encrypted\r\nIf this condition is not met, only the 16 first bytes of the file at most will be destroyed. The rest of the file will be correctly decrypted." % CRYPTED_EXTENSION)
+    parser.add_argument('file', type=str, nargs='+', help='file(s) to decrypt')
+    timearg = parser.add_mutually_exclusive_group()
+    timearg.add_argument('-l', '--localtime', type=valid_date, help='time of the encryption (local time, format YYYY-MM-DD-hh-mm-ss), if known. Can be approximative if you pass the --delta argument')
+    timearg.add_argument('-t', '--time', type=int, help='time of the encryption (in seconds since Epoch), if known. Can be approximative if you pass the --delta argument')
+    parser.add_argument('-d', '--delta', type=int, help='number of seconds to bruteforce, around the provided encryption time, or the file\'s last modification date')
+    parser.add_argument('-v', '--verbose', help='verbose mode', action="store_true")
+    parser.add_argument('-o', '--overwrite', help='automatically overwrite decrypted files. Ex: after decryption of xxx.ext%s, xxx.ext will be overwritten' % CRYPTED_EXTENSION, action="store_true")
+    parser.add_argument('-e', '--extension', help='manually provide the encrypted file extension. The tool currently supports ".[embrace@airmail.cc].embrace" (default), ".[everbe@airmail.cc].everbe" and ".[pain@cock.lu].pain"')
+    parser.add_argument('-r', '--recursive', help='performs decryption recursively on folders', action="store_true")
+
+    return parser.parse_args()
+
+
+args = parse_args()
+
+VERBOSE = args.verbose
+
+if args.extension is not None:
+    CRYPTED_EXTENSION = args.extension
+
+if args.recursive and not ((args.time is not None or args.localtime is not None) and args.delta is None):
+    print "[!] It is not a good idea to perform recursive decription without providing the exact encryption time, as it would perform a brute force attack on every file"
+    print "[!] Instead, first launch the tool on a specific file with the following command to get the exact encryption time:"
+    print "\t %s \\" % sys.argv[0]
+    print "\t\t--time/--localtime <approximative time of encryption>\\"
+    print "\t\t--delta <uncertainty of the provided encryption time in seconds> \\"
+    print "\t\t<file name>"
+    print
+    print "[!] Then, note the computed encryption time returned by the tool, and check the content of the decrypted file."
+    print "[!] If the file has been recovered correctly, you can use recursive decryption safely:"
+    print "\t %s \\" % sys.argv[0]
+    print "\t\t--time/--localtime <exact encryption time returned by the tool> \\"
+    print "\t\t--recursive \\"
+    print "\t\t--extension <encrypted file extension> \\"
+    print "\t\t<folder name>"
+    exit(-1)
+
+for file_or_dir_name in args.file:
+    if os.path.isdir(file_or_dir_name):
+        dirname = file_or_dir_name
+        if args.recursive:
+            for (root, dirs, files) in os.walk(dirname):
+                for f in files:
+                    filename = os.path.join(root, f)
+                    if filename.endswith(CRYPTED_EXTENSION):
+                        process_file(filename, args)
+                        print
+        else:
+            print "%s is a directory. Provide --recursive if you want recursive decryption. Skipping ..." % dirname
+            print
+        continue
+
+    if not os.path.isfile(file_or_dir_name):
+        print "Not a valid file or directory: '%s'. Skipping ..." % file_or_dir_name
+        print
+        continue
+    filename = file_or_dir_name
+    if not filename.endswith(CRYPTED_EXTENSION):
+        print "Not a valid filename: '%s', should end in %s. Skipping ..." % (filename, CRYPTED_EXTENSION)
+        print
+        continue
+    process_file(filename, args)
     print

@@ -21,6 +21,8 @@ def print_verbose(s):
     if VERBOSE:
         print s
 
+def uint8(n):
+    return n & 0xFF
 def uint32(n):
     return n & 0xFFFFFFFF
 def uint64(n):
@@ -71,6 +73,7 @@ def derive_IV_from_filename(filename):
         if k >= len(filename_16_last_rev):
             break
         filename_16_last_rev[k] += k ^ filename_16_last_rev[k]
+        filename_16_last_rev[k] = uint8(filename_16_last_rev[k])
     if len(filename_16_last_rev) < 16:
         pad_or_trunk(filename_16_last_rev, len(filename_16_last_rev))
     assert (len(filename_16_last_rev)==16)

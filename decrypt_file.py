@@ -15,6 +15,8 @@ POSTFIX_SIZE = 512
 ENCRYPTION_SIZE_LIMIT = 0x100000
 SPECIAL_EXTENTIONS = [".sql", ".mdf", ".txt", ".dbf", ".ckp", ".dacpac", ".db3", ".dtxs", ".mdt", ".sdf", ".MDF", ".DBF"]
 VERBOSE = False
+MAX_ANALYZED_SIZE = 1024 # only check the first 4KB for decryption during key bruteforcing
+TMP_EXTENSION = ".tmp_decrypted"
 
 def print_verbose(s):
     global VERBOSE
@@ -76,20 +78,42 @@ def derive_IV_from_filename(filename):
     assert (len(filename_16_last_rev)==16)
     return bytes_to_str(filename_16_last_rev)
 
-def encrypt_file(filecontent, filename, time):
+def encrypt_filecontent(filecontent, filename, time):
     IV = derive_IV_from_filename(filename)
     size_to_encrypt = pad_or_trunk(filecontent, len(filecontent))
     aes = AES.new(init_keys(time), AES.MODE_CBC, derive_IV_from_filename(filename))
     cipher = aes.encrypt(filecontent[:size_to_encrypt]) + filecontent[size_to_encrypt:]
     return cipher
 
-def decrypt_file(filecontent, filename, time):
+def decrypt_filecontent(filecontent, filename, time):
     filename = filename.replace(CRYPTED_EXTENSION, "")
     IV = derive_IV_from_filename(filename)
     size_to_decrypt = (len(filecontent) / 16) * 16
     aes = AES.new(init_keys(time), AES.MODE_CBC, derive_IV_from_filename(filename))
     plain = aes.decrypt(filecontent[:size_to_decrypt]) + filecontent[size_to_decrypt:]
     return plain
+
+def decrypt_file(filename, size_to_decrypt, time):
+    out_filename = filename + TMP_EXTENSION
+    in_file = open(filename, "rb")
+    out_file = open(out_filename, "wb")
+    filename = filename.replace(CRYPTED_EXTENSION, "")
+    IV = derive_IV_from_filename(filename)
+    aes = AES.new(init_keys(time), AES.MODE_CBC, derive_IV_from_filename(filename))
+    chunk_size = 1024 * 1024 # arbitrary
+    remaining_size_to_decrypt = size_to_decrypt
+    while remaining_size_to_decrypt:
+        to_read = min(chunk_size, remaining_size_to_decrypt)
+        chunk = in_file.read(to_read)
+        decrypted_chunk = aes.decrypt(chunk)
+        out_file.write(decrypted_chunk)
+        remaining_size_to_decrypt -= to_read
+    shutil.copyfileobj(in_file, out_file)
+    out_file.seek(-POSTFIX_SIZE, os.SEEK_END)
+    out_file.truncate()
+    out_file.close()
+    in_file.close()
+    return out_filename
 
 def entropy(string):
         prob = [ float(string.count(c)) / len(string) for c in dict.fromkeys(list(string)) ]
@@ -104,8 +128,8 @@ def bruteforce_encryption_time(filecontent, basetime, filename, delta, distance)
     end = basetime + delta/2
     print_verbose("[+] Trying every possible encryption time between %d and %d (in seconds since Epoch)" % (start, end))
     for time in range(start, end):
-        plain = decrypt_file(filecontent, filename, time)
-        dist = distance(plain[:4096]) #only analyze the first 4KB of the file for randomness testing
+        plain = decrypt_filecontent(filecontent, filename, time)
+        dist = distance(plain)
         if dist < closest:
             besttime = time
             bestplain = plain
@@ -119,15 +143,15 @@ def bruteforce_encryption_time(filecontent, basetime, filename, delta, distance)
 def try_unlock_file(filename, decryptiontime=None, delta=None, distance=entropy):
     original_size = os.path.getsize(filename) - POSTFIX_SIZE
     with open(filename, 'rb') as f:
-        if (original_size < ENCRYPTION_SIZE_LIMIT) or (os.path.splitext(filename) in SPECIAL_EXTENTIONS):
-            filecontent = f.read(original_size)
+        filestart = f.read(MAX_ANALYZED_SIZE)
+        if (original_size <= ENCRYPTION_SIZE_LIMIT) or os.path.splitext(filename) in SPECIAL_EXTENTIONS:
+            size_to_decrypt = (original_size / 16) * 16
         else:
-            filecontent = f.read(ENCRYPTION_SIZE_LIMIT)
+            size_to_decrypt = (ENCRYPTION_SIZE_LIMIT / 16) * 16
     filetime = int(os.path.getmtime(filename))
-    filesize = len(filecontent)
 
     if decryptiontime is not None and delta is None:
-        return decrypt_file(filecontent, filename, decryptiontime)
+        return decrypt_file(filename, size_to_decrypt, decryptiontime)
 
     if delta is None:
         delta = 1000
@@ -140,13 +164,15 @@ def try_unlock_file(filename, decryptiontime=None, delta=None, distance=entropy)
         print_verbose("[+] Trying the %d possible values arount the provided date" % delta)
         basetime = decryptiontime
 
-    besttime = bruteforce_encryption_time(filecontent, basetime, filename, delta, distance)
-    decrypted_content = decrypt_file(filecontent, filename, besttime)
-    print "[+] The encryption time seems to be %s (in seconds since Epoch) or %s in local time" % (besttime, time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime(besttime)))
-    print "[+] Use it to decrypt every other files in the same machine (cf. help)"
-    print "[+] PLEASE CHECK THE FILE CONTENT. Discard this result if the decrypted file content is not consistent with the file type."
-    print "[+] Decrypted file starts with %s " % repr(decrypted_content[:30])
-    return decrypted_content
+    besttime = bruteforce_encryption_time(filestart, basetime, filename, delta, distance)
+    decrypted_file_name = decrypt_file(filename, size_to_decrypt, besttime)
+    with open(decrypted_file_name, "rb") as decrypted_file:
+        decrypted_file_start = decrypted_file.read(30)
+        print "[+] The encryption time seems to be %s (in seconds since Epoch) or %s in local time" % (besttime, time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime(besttime)))
+        print "[+] Use it to decrypt every other files in the same machine (cf. help)"
+        print "[+] PLEASE CHECK THE DECRYPTED FILE CONTENT. Discard this result if the decrypted file content is not consistent with the file type."
+        print "[+] Decrypted file starts with %s " % repr(decrypted_file_start)
+    return decrypted_file_name
 
 def valid_date(s):
     try:
@@ -172,22 +198,19 @@ def process_file(filename, args):
     else:
         decryptiontime = args.time
 
-    decrypted_content = try_unlock_file(filename, decryptiontime=decryptiontime, delta=args.delta)
+    decrypted_filename = try_unlock_file(filename, decryptiontime=decryptiontime, delta=args.delta)
 
     new_filename = filename.replace(CRYPTED_EXTENSION, "")
     if os.path.isfile(new_filename) and not args.overwrite:
         print "[?] File %s already exists. Overwrite ? [Y/n]" % new_filename
         if "n" in raw_input().lower():
+            os.remove(decrypted_filename)
             print "[!] Skipping %s" % new_filename
             return
     print "[+] Writing decoded file in %s" % new_filename
-    with open(new_filename, "wb") as newf:
-        with open(filename, "rb") as oldf:
-            newf.write(decrypted_content)
-            oldf.seek(len(decrypted_content))
-            remaining_size = os.path.getsize(filename) - len(decrypted_content) - POSTFIX_SIZE
-            shutil.copyfileobj(oldf, newf, remaining_size)
-
+    if os.path.exists(new_filename):
+        os.remove(new_filename)
+    os.rename(decrypted_filename, new_filename)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Decrypt .embrace ransomware files", epilog="For this tool to work, the last 16 characters of the encrypted file's path (including the file's name, without '%s') must be the same as when the file was encrypted\r\nIf this condition is not met, only the 16 first bytes of the file at most will be destroyed. The rest of the file will be correctly decrypted." % CRYPTED_EXTENSION)

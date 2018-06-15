@@ -13,14 +13,14 @@ This decryption tool works as follows:
 * For each value, it generates an AES key using the derivation algorithm present in the malware, and try to decrypt the file with it
 * The tool computes the avererage Shannon's entropy per byte of the decryption result.
   * A high value of entropy (~8 bits by byte) indicates a "random" result, likely to be the product of a decryption with a wrong key.
-  * A lesser value indicates "non-random" content (text content, or binary file with structured headers), which means the the right key has been found. 
+  * A lesser value indicates "non-random" content (text content, or binary file with structured headers), which means the the right key has been found.
 
 Once one file has been decrypted, the initial value of ```time(0)``` is known, and so the corresponding generated AES key. This key can then be reused to decrypt instantaneously any other file on the same infected machine.
 
 ## Script usage
 ```
 usage: decrypt_file.py [-h] [-l LOCALTIME | -t TIME] [-d DELTA] [-v] [-o]
-                       [-e EXTENSION]
+                       [-e EXTENSION] [-r]
                        file [file ...]
 
 Decrypt .embrace ransomware files
@@ -41,15 +41,16 @@ optional arguments:
                         number of seconds to bruteforce, around the provided
                         encryption time, or the file's last modification date
   -v, --verbose         verbose mode
-  -o, --overwrite       Automatically overwrite decrypted files. Ex: after
+  -o, --overwrite       automatically overwrite decrypted files. Ex: after
                         decryption of xxx.ext..[embrace@airmail.cc].embrace,
                         xxx.ext will be overwritten
   -e EXTENSION, --extension EXTENSION
-                        Manually provide the encrypted file extension. The
+                        manually provide the encrypted file extension. The
                         tool currently supports
                         ".[embrace@airmail.cc].embrace" (default),
                         ".[everbe@airmail.cc].everbe" and
                         ".[pain@cock.lu].pain"
+  -r, --recursive       performs decryption recursively on folders
 
 For this tool to work, the last 16 characters of the encrypted file's path
 (including the file's name, without '.[embrace@airmail.cc].embrace') must be
